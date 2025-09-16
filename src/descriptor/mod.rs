@@ -15,6 +15,7 @@ use core::fmt;
 use core::ops::Range;
 use core::str::{self, FromStr};
 
+use bitcoin::address::NetworkUnchecked;
 use bitcoin::hashes::{hash160, ripemd160, sha256};
 use bitcoin::{
     secp256k1, Address, Network, Script, ScriptBuf, TxIn, Weight, Witness, WitnessVersion,
@@ -31,6 +32,7 @@ use crate::{
     Satisfier, ToPublicKey, TranslateErr, Translator,
 };
 
+mod addr;
 mod bare;
 mod iter;
 mod segwitv0;
@@ -39,6 +41,7 @@ mod sortedmulti;
 mod tr;
 
 // Descriptor Exports
+pub use self::addr::Addr;
 pub use self::bare::{Bare, Pkh};
 pub use self::iter::PkIter;
 pub use self::segwitv0::{Wpkh, Wsh, WshInner};
@@ -75,6 +78,8 @@ pub enum Descriptor<Pk: MiniscriptKey> {
     Wsh(Wsh<Pk>),
     /// Pay-to-Taproot
     Tr(Tr<Pk>),
+    /// Address descriptor (BIP-385)
+    Addr(Addr<Pk>),
 }
 
 impl<Pk: MiniscriptKey> From<Bare<Pk>> for Descriptor<Pk> {
@@ -107,6 +112,11 @@ impl<Pk: MiniscriptKey> From<Tr<Pk>> for Descriptor<Pk> {
     fn from(inner: Tr<Pk>) -> Self { Descriptor::Tr(inner) }
 }
 
+impl<Pk: MiniscriptKey> From<Addr<Pk>> for Descriptor<Pk> {
+    #[inline]
+    fn from(inner: Addr<Pk>) -> Self { Descriptor::Addr(inner) }
+}
+
 /// Descriptor Type of the descriptor
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum DescriptorType {
@@ -132,6 +142,8 @@ pub enum DescriptorType {
     ShWshSortedMulti,
     /// Tr Descriptor
     Tr,
+    /// Addr descriptor
+    Addr,
 }
 
 impl DescriptorType {
@@ -145,7 +157,7 @@ impl DescriptorType {
             Wpkh | ShWpkh | Wsh | ShWsh | ShWshSortedMulti | WshSortedMulti => {
                 Some(WitnessVersion::V0)
             }
-            Bare | Sh | Pkh | ShSortedMulti => None,
+            Bare | Sh | Pkh | ShSortedMulti | Addr => None,
         }
     }
 }
@@ -240,6 +252,9 @@ impl<Pk: MiniscriptKey> Descriptor<Pk> {
         Ok(Descriptor::Tr(Tr::new(key, script)?))
     }
 
+    /// Create a new addr descriptor
+    pub fn new_addr(addr: Address<NetworkUnchecked>) -> Self { Descriptor::Addr(Addr::new(addr)) }
+
     /// An iterator over all the keys referenced in the descriptor.
     pub fn iter_pk(&self) -> PkIter<'_, Pk> {
         match *self {
@@ -260,6 +275,7 @@ impl<Pk: MiniscriptKey> Descriptor<Pk> {
                 WshInner::Ms(ref ms) => PkIter::from_miniscript_segwit(ms),
             },
             Descriptor::Tr(ref tr) => PkIter::from_tr(tr),
+            Descriptor::Addr(_) => PkIter::empty(),
         }
     }
 
@@ -317,6 +333,7 @@ impl<Pk: MiniscriptKey> Descriptor<Pk> {
                 WshInner::Ms(ref _ms) => DescriptorType::Wsh,
             },
             Descriptor::Tr(ref _tr) => DescriptorType::Tr,
+            Descriptor::Addr(..) => DescriptorType::Addr,
         }
     }
 
@@ -337,6 +354,7 @@ impl<Pk: MiniscriptKey> Descriptor<Pk> {
             Descriptor::Wsh(ref wsh) => wsh.sanity_check(),
             Descriptor::Sh(ref sh) => sh.sanity_check(),
             Descriptor::Tr(ref tr) => tr.sanity_check(),
+            Descriptor::Addr(ref addr) => addr.sanity_check(),
         }
     }
 
@@ -386,6 +404,7 @@ impl<Pk: MiniscriptKey> Descriptor<Pk> {
             Descriptor::Wsh(ref wsh) => wsh.max_weight_to_satisfy()?,
             Descriptor::Sh(ref sh) => sh.max_weight_to_satisfy()?,
             Descriptor::Tr(ref tr) => tr.max_weight_to_satisfy()?,
+            Descriptor::Addr(ref addr) => addr.max_weight_to_satisfy()?,
         };
         Ok(weight)
     }
@@ -412,6 +431,7 @@ impl<Pk: MiniscriptKey> Descriptor<Pk> {
             Descriptor::Wsh(ref wsh) => wsh.max_satisfaction_weight()?,
             Descriptor::Sh(ref sh) => sh.max_satisfaction_weight()?,
             Descriptor::Tr(ref tr) => tr.max_satisfaction_weight()?,
+            Descriptor::Addr(_) => Err(Error::CouldNotSatisfy)?,
         };
         Ok(weight)
     }
@@ -431,6 +451,7 @@ impl<Pk: MiniscriptKey> Descriptor<Pk> {
             Descriptor::Sh(ref sh) => Descriptor::Sh(sh.translate_pk(t)?),
             Descriptor::Wsh(ref wsh) => Descriptor::Wsh(wsh.translate_pk(t)?),
             Descriptor::Tr(ref tr) => Descriptor::Tr(tr.translate_pk(t)?),
+            Descriptor::Addr(ref addr) => Descriptor::Addr(addr.translate_pk(t)?),
         };
         Ok(desc)
     }
@@ -451,6 +472,7 @@ impl<Pk: MiniscriptKey + ToPublicKey> Descriptor<Pk> {
             Descriptor::Wsh(ref wsh) => Ok(wsh.address(network)),
             Descriptor::Sh(ref sh) => Ok(sh.address(network)),
             Descriptor::Tr(ref tr) => Ok(tr.address(network)),
+            Descriptor::Addr(ref addr) => Ok(addr.address().clone().require_network(network)?),
         }
     }
 
@@ -463,6 +485,7 @@ impl<Pk: MiniscriptKey + ToPublicKey> Descriptor<Pk> {
             Descriptor::Wsh(ref wsh) => wsh.script_pubkey(),
             Descriptor::Sh(ref sh) => sh.script_pubkey(),
             Descriptor::Tr(ref tr) => tr.script_pubkey(),
+            Descriptor::Addr(ref addr) => addr.script_pubkey(),
         }
     }
 
@@ -481,6 +504,7 @@ impl<Pk: MiniscriptKey + ToPublicKey> Descriptor<Pk> {
             Descriptor::Wsh(_) => ScriptBuf::new(),
             Descriptor::Sh(ref sh) => sh.unsigned_script_sig(),
             Descriptor::Tr(_) => ScriptBuf::new(),
+            Descriptor::Addr(_) => ScriptBuf::new(),
         }
     }
 
@@ -498,6 +522,7 @@ impl<Pk: MiniscriptKey + ToPublicKey> Descriptor<Pk> {
             Descriptor::Wsh(ref wsh) => Ok(wsh.inner_script()),
             Descriptor::Sh(ref sh) => Ok(sh.inner_script()),
             Descriptor::Tr(_) => Err(Error::TrNoScriptCode),
+            Descriptor::Addr(ref addr) => Ok(addr.inner_script()),
         }
     }
 
@@ -516,6 +541,7 @@ impl<Pk: MiniscriptKey + ToPublicKey> Descriptor<Pk> {
             Descriptor::Wsh(ref wsh) => Ok(wsh.ecdsa_sighash_script_code()),
             Descriptor::Sh(ref sh) => Ok(sh.ecdsa_sighash_script_code()),
             Descriptor::Tr(_) => Err(Error::TrNoScriptCode),
+            Descriptor::Addr(ref addr) => Ok(addr.ecdsa_sighash_script_code()),
         }
     }
 
@@ -533,6 +559,7 @@ impl<Pk: MiniscriptKey + ToPublicKey> Descriptor<Pk> {
             Descriptor::Wsh(ref wsh) => wsh.get_satisfaction(satisfier),
             Descriptor::Sh(ref sh) => sh.get_satisfaction(satisfier),
             Descriptor::Tr(ref tr) => tr.get_satisfaction(&satisfier),
+            Descriptor::Addr(..) => Err(Error::CouldNotSatisfy),
         }
     }
 
@@ -550,6 +577,7 @@ impl<Pk: MiniscriptKey + ToPublicKey> Descriptor<Pk> {
             Descriptor::Wsh(ref wsh) => wsh.get_satisfaction_mall(satisfier),
             Descriptor::Sh(ref sh) => sh.get_satisfaction_mall(satisfier),
             Descriptor::Tr(ref tr) => tr.get_satisfaction_mall(&satisfier),
+            Descriptor::Addr(..) => Err(Error::CouldNotSatisfy),
         }
     }
 
@@ -583,6 +611,7 @@ impl Descriptor<DefiniteDescriptorKey> {
             Descriptor::Wsh(ref wsh) => wsh.plan_satisfaction(provider),
             Descriptor::Sh(ref sh) => sh.plan_satisfaction(provider),
             Descriptor::Tr(ref tr) => tr.plan_satisfaction(provider),
+            Descriptor::Addr(ref addr) => addr.plan_satisfaction(provider),
         };
 
         if let satisfy::Witness::Stack(stack) = satisfaction.stack {
@@ -612,6 +641,7 @@ impl Descriptor<DefiniteDescriptorKey> {
             Descriptor::Wsh(ref wsh) => wsh.plan_satisfaction_mall(provider),
             Descriptor::Sh(ref sh) => sh.plan_satisfaction_mall(provider),
             Descriptor::Tr(ref tr) => tr.plan_satisfaction_mall(provider),
+            Descriptor::Addr(ref addr) => addr.plan_satisfaction_mall(provider),
         };
 
         if let satisfy::Witness::Stack(stack) = satisfaction.stack {
@@ -637,6 +667,7 @@ impl<Pk: MiniscriptKey> ForEachKey<Pk> for Descriptor<Pk> {
             Descriptor::Wsh(ref wsh) => wsh.for_each_key(pred),
             Descriptor::Sh(ref sh) => sh.for_each_key(pred),
             Descriptor::Tr(ref tr) => tr.for_each_key(pred),
+            Descriptor::Addr(ref addr) => addr.for_each_key(pred),
         }
     }
 }
@@ -1032,6 +1063,7 @@ impl<Pk: FromStrKey> crate::expression::FromTree for Descriptor<Pk> {
             ("sh", 1) => Descriptor::Sh(Sh::from_tree(top)?),
             ("wsh", 1) => Descriptor::Wsh(Wsh::from_tree(top)?),
             ("tr", _) => Descriptor::Tr(Tr::from_tree(top)?),
+            ("addr", 1) => Descriptor::Addr(Addr::from_tree(top)?),
             _ => Descriptor::Bare(Bare::from_tree(top)?),
         })
     }
@@ -1064,6 +1096,7 @@ impl<Pk: MiniscriptKey> fmt::Debug for Descriptor<Pk> {
             Descriptor::Sh(ref sub) => fmt::Debug::fmt(sub, f),
             Descriptor::Wsh(ref sub) => fmt::Debug::fmt(sub, f),
             Descriptor::Tr(ref tr) => fmt::Debug::fmt(tr, f),
+            Descriptor::Addr(ref addr) => fmt::Debug::fmt(addr, f),
         }
     }
 }
@@ -1077,6 +1110,7 @@ impl<Pk: MiniscriptKey> fmt::Display for Descriptor<Pk> {
             Descriptor::Sh(ref sub) => fmt::Display::fmt(sub, f),
             Descriptor::Wsh(ref sub) => fmt::Display::fmt(sub, f),
             Descriptor::Tr(ref tr) => fmt::Display::fmt(tr, f),
+            Descriptor::Addr(ref addr) => fmt::Display::fmt(addr, f),
         }
     }
 }
@@ -2688,5 +2722,15 @@ pk(03f28773c2d975288bc7d1d205c3748651b075fbc6610e58cddeeddf8f19405aa8))";
                 desc_str
             );
         }
+    }
+
+    #[test]
+    fn test_addr_descriptor() {
+        let desc_str = "addr(3PUNyaW7M55oKWJ3kDukwk9bsKvryra15j)#6vhk2xgr";
+        let desc: Descriptor<String> = Descriptor::from_str(desc_str).unwrap();
+
+        assert_eq!(desc.desc_type(), DescriptorType::Addr);
+
+        assert_eq!(desc.to_string(), desc_str);
     }
 }

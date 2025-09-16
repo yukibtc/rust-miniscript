@@ -18,6 +18,18 @@ pub struct PkIter<'desc, Pk: MiniscriptKey> {
 }
 
 impl<'desc, Pk: MiniscriptKey> PkIter<'desc, Pk> {
+    pub(super) fn empty() -> Self {
+        Self {
+            single_key: None,
+            taptree_iter: None,
+            ms_iter_bare: None,
+            ms_iter_legacy: None,
+            ms_iter_segwit: None,
+            ms_iter_taproot: None,
+            sorted_multi: None,
+        }
+    }
+
     pub(super) fn from_key(pk: Pk) -> Self {
         Self {
             single_key: Some(pk),
