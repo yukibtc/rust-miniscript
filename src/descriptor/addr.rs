@@ -6,6 +6,7 @@
 //!
 
 use core::fmt;
+use core::str::FromStr;
 
 use bitcoin::address::NetworkUnchecked;
 use bitcoin::{Address, ScriptBuf, Weight};
@@ -15,7 +16,7 @@ use crate::expression::{self, FromTree};
 use crate::miniscript::satisfy::{Placeholder, Satisfaction, Witness};
 use crate::plan::AssetProvider;
 use crate::policy::{semantic, Liftable};
-use crate::{Error, ForEachKey, FromStrKey, MiniscriptKey, ParseError, TranslateErr, Translator};
+use crate::{Error, ForEachKey, FromStrKey, MiniscriptKey};
 
 /// An Address descriptor
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -44,15 +45,6 @@ impl<Pk: MiniscriptKey> Addr<Pk> {
     /// This method returns an error indicating the descriptor cannot be satisfied.
     #[inline]
     pub fn max_weight_to_satisfy(&self) -> Result<Weight, Error> { Err(Error::CouldNotSatisfy) }
-
-    /// Converts the keys in the descriptor from one type to another.
-    #[inline]
-    pub fn translate_pk<T>(&self, _t: &mut T) -> Result<Addr<T::TargetPk>, TranslateErr<T::Error>>
-    where
-        T: Translator<Pk>,
-    {
-        Err(TranslateErr::OuterError(Error::CouldNotSatisfy))
-    }
 }
 
 impl<Pk: MiniscriptKey> Addr<Pk> {
@@ -117,17 +109,20 @@ impl<Pk: MiniscriptKey> Liftable<Pk> for Addr<Pk> {
 }
 
 impl<Pk: FromStrKey> FromTree for Addr<Pk> {
-    fn from_tree(root: expression::TreeIterItem) -> Result<Self, Error> {
-        let address_str: String = root
-            .verify_terminal_parent("addr", "address")
-            .map_err(Error::Parse)?;
+    fn from_tree(root: &expression::Tree) -> Result<Self, Error> {
+        if root.name == "addr" && root.args.len() == 1 {
+            // Parse the address string
+            let address: Address<NetworkUnchecked> =
+                expression::terminal(&root.args[0], |pk| Address::from_str(pk))?;
 
-        // Parse the address string
-        let address: Address<NetworkUnchecked> = address_str
-            .parse()
-            .map_err(|e| Error::Parse(ParseError::FromStr(Box::new(e))))?;
-
-        Ok(Addr::new(address))
+            Ok(Addr::new(address))
+        } else {
+            Err(Error::Unexpected(format!(
+                "{}({} args) while parsing wpkh descriptor",
+                root.name,
+                root.args.len(),
+            )))
+        }
     }
 }
 
@@ -135,7 +130,7 @@ impl<Pk: FromStrKey> core::str::FromStr for Addr<Pk> {
     type Err = Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let top = expression::Tree::from_str(s)?;
-        Self::from_tree(top.root())
+        Self::from_tree(&top)
     }
 }
 

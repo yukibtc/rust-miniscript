@@ -598,6 +598,7 @@ where
             Descriptor::Sh(ref sh) => Descriptor::Sh(sh.translate_pk(t)?),
             Descriptor::Wsh(ref wsh) => Descriptor::Wsh(wsh.translate_pk(t)?),
             Descriptor::Tr(ref tr) => Descriptor::Tr(tr.translate_pk(t)?),
+            Descriptor::Addr(ref addr) => Err(TranslateErr::OuterError(Error::CouldNotSatisfy))?,
         };
         Ok(desc)
     }
