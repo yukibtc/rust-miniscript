@@ -1191,7 +1191,10 @@ fn update_item_with_descriptor_helper<F: PsbtFields>(
         item.bip32_derivation().append(&mut bip32_derivation.0);
 
         match &derived {
-            Descriptor::Bare(_) | Descriptor::Pkh(_) | Descriptor::Wpkh(_) => {}
+            Descriptor::Bare(_)
+            | Descriptor::Pkh(_)
+            | Descriptor::Wpkh(_)
+            | Descriptor::Addr(_) => {}
             Descriptor::Sh(sh) => match sh.as_inner() {
                 descriptor::ShInner::Wsh(wsh) => {
                     *item.witness_script() = Some(wsh.inner_script());

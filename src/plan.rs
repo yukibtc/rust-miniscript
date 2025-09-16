@@ -303,6 +303,7 @@ impl Plan {
             DescriptorType::ShWsh | DescriptorType::ShWshSortedMulti | DescriptorType::ShWpkh => {
                 (stack, self.descriptor.unsigned_script_sig())
             }
+            DescriptorType::Addr => Err(Error::CouldNotSatisfy)?,
         })
     }
 
@@ -406,7 +407,10 @@ impl Plan {
             }
 
             match &self.descriptor {
-                Descriptor::Bare(_) | Descriptor::Pkh(_) | Descriptor::Wpkh(_) => {}
+                Descriptor::Bare(_)
+                | Descriptor::Pkh(_)
+                | Descriptor::Wpkh(_)
+                | Descriptor::Addr(_) => {}
                 Descriptor::Sh(sh) => match sh.as_inner() {
                     descriptor::ShInner::Wsh(wsh) => {
                         input.witness_script = Some(wsh.inner_script());
